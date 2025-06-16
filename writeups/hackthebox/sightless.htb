@@ -1,0 +1,98 @@
+🚩 HTB: Sightless — Full Walkthrough
+
+Difficulty: Medium | Date: Jan 11, 2025
+Vector: SQLi → Docker Escape → Debug Abuse → RCE → Root via Froxlor Misconfig
+Author: Rephrased from pk2212
+🧠 Summary of Attack Path
+
+    ✅ Initial foothold via CVE-2022-0944 exploit on SQLPad instance
+
+    🚪 Docker container escape by cracking user password from /etc/shadow
+
+    🔐 SSH login as user michael using cracked credentials
+
+    🔁 Local port forwarding to expose internal Froxlor panel
+
+    🧪 Chrome Remote Debugger abused to capture Froxlor admin credentials
+
+    🔓 Privilege escalation via PHP-FPM misconfiguration to extract root SSH private key
+
+🔍 Recon & Subdomain Discovery
+
+Standard Nmap scan didn't return anything unusual:
+
+nmap -sC -sV -v <target-ip>
+
+Navigating to port 80, I noticed a reference to a tool called SQLPad. After checking the URL structure, I guessed the subdomain:
+
+http://sqlpad.sightless.htb
+
+I added this to /etc/hosts and gained access via browser.
+💥 Exploiting SQLPad (CVE-2022-0944)
+
+Without wasting time, I searched for public exploits for SQLPad and found:
+
+    0xRoqeeb/sqlpad-rce-exploit-CVE-2022-0944
+
+I cloned the PoC, launched the exploit, and successfully received a reverse shell. However, I was inside a Docker container.
+🧱 Docker Escape via /etc/shadow
+
+With root access inside the container, I dumped /etc/shadow:
+
+    The file contained hashes for both root and michael.
+
+    I extracted michael’s hash and identified it as SHA-512 using hashid.
+
+    Then cracked it with Hashcat.
+
+Once I had the credentials, I escaped the container by logging into the host system via SSH as michael.
+🧭 Enumeration → Internal Service on Port 8080
+
+Running LinPEAS revealed internal services. Alternatively, ss -tulpn also listed exposed ports.
+
+I performed local port forwarding to access port 8080:
+
+ssh -L 8080:127.0.0.1:8080 michael@<target-ip>
+
+This exposed a Froxlor web panel—a server management dashboard.
+🛠️ Chromium Debugger to Capture Admin Credentials
+
+To proceed, I needed Chromium with remote debugging support. Installed via Snap:
+
+sudo apt install snapd
+sudo snap install chromium
+/snap/bin/chromium --remote-debugging-port=9222
+
+Navigated to:
+
+chrome://inspect/#devices
+
+Configured it to monitor localhost:8080 and opened the Remote Target.
+
+Using Network → Payloads, I captured the admin credentials in a login request.
+🔑 Privilege Escalation via PHP-FPM Misconfiguration
+
+Logged into Froxlor as admin. Under Settings → PHP → PHP-FPM Versions, I added a malicious configuration:
+
+    Set PHP-FPM restart command to:
+
+    cp /root/.ssh/id_rsa /tmp/id_rsa
+
+Saved and applied settings. The private key dropped into /tmp—but had root-only permissions.
+
+I then updated the restart command to:
+
+chmod 777 /tmp/id_rsa
+
+Waited briefly, and now had full read/write/execute access to the private key.
+
+Downloaded it and logged in as root.
+🎯 Final Flag
+
+    ✅ user.txt: grabbed after SSH login as michael
+
+    ✅ root.txt: retrieved using the stolen SSH key
+
+👊 Mission Complete
+
+Another one bites the dust. Rooted Sightless through a clean chain of enumeration, known exploits, credential capture, and a clever privilege escalation.
